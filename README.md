@@ -34,19 +34,19 @@
 # Clone and make executable
 git clone https://github.com/youruser/auto-hardon.git
 cd auto-hardon
-chmod +x kali-harden.sh
+chmod +x auto-hardon.sh
 
 # Interactive mode (recommended)
-sudo ./kali-harden.sh
+sudo ./auto-hardon.sh
 
 # Preview everything without changing anything
-sudo ./kali-harden.sh --dry-run
+sudo ./auto-hardon.sh --dry-run
 
 # Full auto — no prompts, nukes SSH (see Paranoid Mode below)
-sudo ./kali-harden.sh --paranoid
+sudo ./auto-hardon.sh --paranoid
 
 # Custom log file
-sudo ./kali-harden.sh --log /tmp/my-audit.log
+sudo ./auto-hardon.sh --log /tmp/my-audit.log
 ```
 
 ---
@@ -58,14 +58,14 @@ sudo ./kali-harden.sh --log /tmp/my-audit.log
 | `-h`, `--help` | Show help menu and exit |
 | `-y`, `--paranoid` | Accept all prompts automatically, remove SSH entirely |
 | `-n`, `--dry-run` | Preview all actions without making any changes |
-| `-l`, `--log FILE` | Write output log to `FILE` (default: `/var/log/kali-harden-<timestamp>.log`) |
+| `-l`, `--log FILE` | Write output log to `FILE` (default: `/var/log/auto-hardon-<timestamp>.log`) |
 
 ---
 
 ## Paranoid Mode
 
 ```bash
-sudo ./kali-harden.sh --paranoid
+sudo ./auto-hardon.sh --paranoid
 ```
 
 Runs the entire script non-interactively with maximum hardening applied:
@@ -174,7 +174,7 @@ enabled = true
 
 ## Output
 
-Every run produces a timestamped log at `/var/log/kali-harden-<YYYYMMDD_HHMMSS>.log` (or your custom path) containing every command run, its output, and a summary of applied vs skipped actions.
+Every run produces a timestamped log at `/var/log/auto-hardon-<YYYYMMDD_HHMMSS>.log` (or your custom path) containing every command run, its output, and a summary of applied vs skipped actions.
 
 At the end of each run, a summary is printed:
 
