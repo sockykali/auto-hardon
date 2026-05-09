@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  kali-harden.sh  —  Interactive hardening script for Kali / Debian Linux
+#  auto-hardon.sh  —  Interactive hardening script for Kali / Debian Linux
 #  Run as root. Prompts before anything potentially disruptive.
 # =============================================================================
 
@@ -21,7 +21,7 @@ fi
 DRY_RUN=false
 AUTO_YES=false
 SECTION_SKIP=false
-LOG_FILE="/var/log/kali-harden-$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="/var/log/auto-hardon-$(date +%Y%m%d_%H%M%S).log"
 declare -a APPLIED=()
 declare -a SKIPPED=()
 declare -a WARNINGS_LIST=()
@@ -31,17 +31,17 @@ usage() {
     cat <<EOF
 
 ${W}╔══════════════════════════════════════════════════════════════════╗
-║          kali-harden.sh  —  Linux / Kali Hardening Script        ║
+║          auto-hardon.sh  —  Linux / Kali Hardening Script        ║
 ╚══════════════════════════════════════════════════════════════════╝${NC}
 
 ${W}USAGE${NC}
-  sudo ./kali-harden.sh [OPTIONS]
+  sudo ./auto-hardon.sh [OPTIONS]
 
 ${W}OPTIONS${NC}
   ${C}-h, --help${NC}          Show this help menu and exit
   ${C}-y, --paranoid${NC}      Auto-accept ALL prompts (non-interactive — use carefully)
   ${C}-n, --dry-run${NC}       Preview every action without making any changes
-  ${C}-l, --log FILE${NC}      Write log to FILE  (default: /var/log/kali-harden-<ts>.log)
+  ${C}-l, --log FILE${NC}      Write log to FILE  (default: /var/log/auto-hardon-<ts>.log)
 
 ${W}WHAT IT DOES${NC}
   ${Y}Prompts before anything potentially disruptive:${NC}
@@ -63,10 +63,10 @@ ${W}OPTIONAL INSTALLS (prompted)${NC}
   ufw · fail2ban · unattended-upgrades · rkhunter · lynis · clamav
 
 ${W}EXAMPLES${NC}
-  ${DIM}sudo ./kali-harden.sh${NC}                 # Recommended — fully interactive
-  ${DIM}sudo ./kali-harden.sh --dry-run${NC}        # Preview what would change
-  ${DIM}sudo ./kali-harden.sh --paranoid${NC}        # Full auto, no prompts
-  ${DIM}sudo ./kali-harden.sh -l /tmp/audit.log${NC} # Custom log path
+  ${DIM}sudo ./auto-hardon.sh${NC}                 # Recommended — fully interactive
+  ${DIM}sudo ./auto-hardon.sh --dry-run${NC}        # Preview what would change
+  ${DIM}sudo ./auto-hardon.sh --paranoid${NC}        # Full auto, no prompts
+  ${DIM}sudo ./auto-hardon.sh -l /tmp/audit.log${NC} # Custom log path
 
 EOF
     exit 0
@@ -89,7 +89,7 @@ done
 
 # ── Init log file ─────────────────────────────────────────────────────────────
 if ! touch "$LOG_FILE" 2>/dev/null; then
-    LOG_FILE="/tmp/kali-harden-$(date +%Y%m%d_%H%M%S).log"
+    LOG_FILE="/tmp/auto-hardon-$(date +%Y%m%d_%H%M%S).log"
     touch "$LOG_FILE"
 fi
 
@@ -425,7 +425,7 @@ SYSCTL_FILE="/etc/sysctl.d/99-harden.conf"
 
 if [[ "$DRY_RUN" == false ]]; then
     cat > "$SYSCTL_FILE" <<'SYSCTL'
-# ── kali-harden.sh — kernel security parameters ──────────────────────────────
+# ── auto-hardon.sh — kernel security parameters ──────────────────────────────
 
 # ── Network: disable IP forwarding (this host is not a router) ───────────────
 net.ipv4.ip_forward                     = 0
@@ -564,7 +564,7 @@ _info "Setting default umask to 027 (owner=rwx, group=rx, others=none)..."
 
 if [[ "$DRY_RUN" == false ]]; then
     cat > "$UMASK_FILE" <<'UMASK'
-# kali-harden.sh — restrictive default umask
+# auto-hardon.sh — restrictive default umask
 # owner: rwx (7), group: r-x (5), others: --- (0)
 umask 027
 UMASK
