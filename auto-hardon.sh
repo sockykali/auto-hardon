@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  auto-hardon.sh  —  Interactive hardening script for Kali / Debian Linux
+#  kali-harden.sh  —  Interactive hardening script for Kali / Debian Linux
 #  Run as root. Prompts before anything potentially disruptive.
 # =============================================================================
 
@@ -12,15 +12,16 @@ trap '_err_handler "${BASH_COMMAND}" $LINENO' ERR
 if [[ -t 1 ]]; then
     R='\033[0;31m'   G='\033[0;32m'   Y='\033[1;33m'  B='\033[0;34m'
     C='\033[0;36m'   M='\033[0;35m'   W='\033[1;37m'  DIM='\033[2m'
-    NC='\033[0m'
+    HG='\033[1;32m'  NC='\033[0m'
 else
-    R='' G='' Y='' B='' C='' M='' W='' DIM='' NC=''
+    R='' G='' Y='' B='' C='' M='' W='' DIM='' HG='' NC=''
 fi
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 DRY_RUN=false
 AUTO_YES=false
-LOG_FILE="/var/log/auto-hardon-$(date +%Y%m%d_%H%M%S).log"
+SECTION_SKIP=false
+LOG_FILE="/var/log/kali-harden-$(date +%Y%m%d_%H%M%S).log"
 declare -a APPLIED=()
 declare -a SKIPPED=()
 declare -a WARNINGS_LIST=()
@@ -30,17 +31,17 @@ usage() {
     cat <<EOF
 
 ${W}╔══════════════════════════════════════════════════════════════════╗
-║          auto-hardon.sh  —  Linux / Kali Hardening Script        ║
+║          kali-harden.sh  —  Linux / Kali Hardening Script        ║
 ╚══════════════════════════════════════════════════════════════════╝${NC}
 
 ${W}USAGE${NC}
-  sudo ./auto-hardon.sh [OPTIONS]
+  sudo ./kali-harden.sh [OPTIONS]
 
 ${W}OPTIONS${NC}
   ${C}-h, --help${NC}          Show this help menu and exit
   ${C}-y, --paranoid${NC}      Auto-accept ALL prompts (non-interactive — use carefully)
   ${C}-n, --dry-run${NC}       Preview every action without making any changes
-  ${C}-l, --log FILE${NC}      Write log to FILE  (default: /var/log/auto-hardon-<ts>.log)
+  ${C}-l, --log FILE${NC}      Write log to FILE  (default: /var/log/kali-harden-<ts>.log)
 
 ${W}WHAT IT DOES${NC}
   ${Y}Prompts before anything potentially disruptive:${NC}
@@ -62,10 +63,10 @@ ${W}OPTIONAL INSTALLS (prompted)${NC}
   ufw · fail2ban · unattended-upgrades · rkhunter · lynis · clamav
 
 ${W}EXAMPLES${NC}
-  ${DIM}sudo ./auto-hardon.sh${NC}                 # Recommended — fully interactive
-  ${DIM}sudo ./auto-hardon.sh --dry-run${NC}        # Preview what would change
-  ${DIM}sudo ./auto-hardon.sh --paranoid${NC}        # Full auto, no prompts
-  ${DIM}sudo ./auto-hardon.sh -l /tmp/audit.log${NC} # Custom log path
+  ${DIM}sudo ./kali-harden.sh${NC}                 # Recommended — fully interactive
+  ${DIM}sudo ./kali-harden.sh --dry-run${NC}        # Preview what would change
+  ${DIM}sudo ./kali-harden.sh --paranoid${NC}        # Full auto, no prompts
+  ${DIM}sudo ./kali-harden.sh -l /tmp/audit.log${NC} # Custom log path
 
 EOF
     exit 0
@@ -88,7 +89,7 @@ done
 
 # ── Init log file ─────────────────────────────────────────────────────────────
 if ! touch "$LOG_FILE" 2>/dev/null; then
-    LOG_FILE="/tmp/auto-hardon-$(date +%Y%m%d_%H%M%S).log"
+    LOG_FILE="/tmp/kali-harden-$(date +%Y%m%d_%H%M%S).log"
     touch "$LOG_FILE"
 fi
 
@@ -100,26 +101,57 @@ _ok()      { _log "${G}  ✔  $*${NC}"; APPLIED+=("$*"); }
 _skip()    { _log "${DIM}  ─  Skipped: $*${NC}"; SKIPPED+=("$*"); }
 _warn()    { _log "${Y}  ⚠  $*${NC}"; WARNINGS_LIST+=("$*"); }
 _err()     { _log "${R}  ✘  $*${NC}"; }
-_section() { _log "\n${B}${W}  ┌─  $*${NC}${B}  $(printf '─%.0s' {1..50})${NC}"; _log ""; }
+_section() {
+    [[ "$SECTION_SKIP" == true ]] && _log "${Y}  ⚡  (section interrupted — skipped)${NC}"
+    SECTION_SKIP=false
+    _log "\n${B}${W}  ┌─  $*${NC}${B}  $(printf '─%.0s' {1..50})${NC}"; _log ""
+}
 
 _err_handler() {
+    # Ignore failures caused by a CTRL+C interrupt — the section will be skipped.
+    [[ "$SECTION_SKIP" == true ]] && return 0
     _err "Command failed: '${1:-unknown}' at line ${2:-?}"
     _err "See $LOG_FILE for details. Exiting."
     exit 1
 }
 
+_RUN_PID=""   # PID of the current background command started by run()
+
+_sigint_handler() {
+    if [[ "$SECTION_SKIP" == true ]]; then
+        echo -e "\n${R}  ✘  CTRL+C — exiting.${NC}"
+        exit 130
+    fi
+    SECTION_SKIP=true
+    # Kill the current background command so wait returns immediately
+    [[ -n "$_RUN_PID" ]] && kill "$_RUN_PID" 2>/dev/null || true
+    echo -e "\n${Y}  ⚡  CTRL+C — skipping to next section... (press again to exit)${NC}"
+}
+trap '_sigint_handler' INT
+
 # run CMD [args…]  — respects dry-run, always logs
 run() {
+    [[ "$SECTION_SKIP" == true ]] && return 0
     if [[ "$DRY_RUN" == true ]]; then
         _log "${DIM}    [dry-run] $*${NC}"
-    else
-        "$@" >> "$LOG_FILE" 2>&1
+        return 0
     fi
+    # Run in background + wait so that SIGINT always fires the INT trap
+    # before bash can check the exit status and trigger the ERR trap.
+    "$@" >> "$LOG_FILE" 2>&1 &
+    _RUN_PID=$!
+    wait "$_RUN_PID" || {
+        _RUN_PID=""
+        [[ "$SECTION_SKIP" == true ]] && return 0
+        return 1   # real failure — ERR trap will fire
+    }
+    _RUN_PID=""
 }
 
 # ask "Question"  — returns 0=yes / 1=no. Respects AUTO_YES and DRY_RUN.
 ask() {
     local prompt="$1"
+    [[ "$SECTION_SKIP" == true ]] && return 1
     if [[ "$DRY_RUN" == true ]]; then
         _log "${DIM}  ? [dry-run]  $prompt  → skip${NC}"
         return 1
@@ -158,17 +190,16 @@ _ssh_set() {
 # ─────────────────────────────────────────────────────────────────────────────
 #  BANNER
 # ─────────────────────────────────────────────────────────────────────────────
-clear
-_log "${W}
-  ╔══════════════════════════════════════════════════════════════════╗
-  ║              A U T O - H A R D O N                              ║
-  ║           Kali Linux Hardening Tool                             ║
-  ╚══════════════════════════════════════════════════════════════════╝${NC}"
-_log "${DIM}  Host   : $(hostname -f 2>/dev/null || hostname)"
-_log "  User   : ${SUDO_USER:-$(whoami)}"
-_log "  Date   : $(date)"
-_log "  Log    : ${LOG_FILE}${NC}"
-_log ""
+     clear
+     _log "${G}   ______   __  __ ______ ______       __  __ ______  ______ ______ ______  __   __  ${NC}"
+     _log "${G}  /\\  __ \\ /\\ \\/\\ \\__  _/\\  __ \\     /\\ \\_\\ \\  __ \\/\\  == /\\  __ /\\  __ \\/\\ \"-.\\  \\  ${NC}"
+     _log "${G}  \\ \\  __ \\\\ \\ \\_\\ \\/_/\\ \\\\ \\ \\/\\ \\   \\ \\  __ \\ \\  __ \\ \\  __\\ \\ \\/\\ \\ \\ \\/\\ \\ \\ \\-.  \\ ${NC}"
+     _log "${G}   \\ \\_\\ \\_\\\\ \\_____\\ \\ \\_\\\\ \\_____\\   \\ \\_\\ \\_\\ \\_\\ \\_\\ \\_\\  \\ \\_____\\ \\_____\\ \\_\\\\\"\\_\\ ${NC}"
+     _log "${G}    \\/_/\\/_/ \\/_____/  \\/_/ \\/_____/    \\/_/\\/_/\\/_/\\/_/\\/_/   \\/_____/\\/_____/\\/_/ \\/_/ ${NC}"
+     _log ""
+     _log "${DIM}                      Kali Linux Hardening Tool${NC}"
+     _log ""
+
 [[ "$DRY_RUN"  == true ]] && _warn "DRY-RUN mode — no changes will be made to your system"
 [[ "$AUTO_YES" == true ]] && _warn "PARANOID MODE — all prompts will be accepted automatically"
 _log ""
@@ -233,6 +264,7 @@ _section "4 / FIREWALL (UFW)"
 
 if command -v ufw &>/dev/null; then
     if ask "Enable UFW with default deny-incoming / allow-outgoing?"; then
+        run ufw --force reset
         run ufw default deny incoming
         run ufw default allow outgoing
         run ufw --force enable
@@ -393,7 +425,7 @@ SYSCTL_FILE="/etc/sysctl.d/99-harden.conf"
 
 if [[ "$DRY_RUN" == false ]]; then
     cat > "$SYSCTL_FILE" <<'SYSCTL'
-# ── auto-hardon.sh — kernel security parameters ──────────────────────────────
+# ── kali-harden.sh — kernel security parameters ──────────────────────────────
 
 # ── Network: disable IP forwarding (this host is not a router) ───────────────
 net.ipv4.ip_forward                     = 0
@@ -532,7 +564,7 @@ _info "Setting default umask to 027 (owner=rwx, group=rx, others=none)..."
 
 if [[ "$DRY_RUN" == false ]]; then
     cat > "$UMASK_FILE" <<'UMASK'
-# auto-hardon.sh — restrictive default umask
+# kali-harden.sh — restrictive default umask
 # owner: rwx (7), group: r-x (5), others: --- (0)
 umask 027
 UMASK
@@ -591,13 +623,57 @@ _section "14 / RKHUNTER"
 
 if command -v rkhunter &>/dev/null; then
     if ask "Run rkhunter initial baseline scan?"; then
+
+        # Known false positive patterns on Kali / Debian desktop installs
+        declare -a RKH_FP=(
+            "lwp-request"           # Perl script — normal on Debian/Kali
+            "sem.haveged"           # haveged entropy daemon semaphore
+            "/etc/.java"            # Standard Java config directory
+            "/etc/.updated"         # PackageKit update timestamp file
+            "thunar"                # Desktop file manager — high shm is normal
+            "xfdesktop"             # XFCE desktop — high shm is normal
+            "firefox-esr"           # Browser — high shm is normal
+        )
+
         _info "Updating rkhunter database..."
-        run rkhunter --update   || true   # non-fatal if mirrors are down
+        run rkhunter --update  || true
         run rkhunter --propupd
-        _info "Running rootkit scan (output → $LOG_FILE)..."
-        rkhunter --check --sk --rwo 2>&1 | tee -a "$LOG_FILE" \
-            || _warn "rkhunter flagged potential issues — review $LOG_FILE"
-        _ok "rkhunter baseline scan complete"
+
+        _info "Running rootkit scan..."
+        rkhunter_tmp=$(mktemp)
+
+        # Run and capture — avoid tee so output is fully buffered before display
+        rkhunter --check --sk --rwo > "$rkhunter_tmp" 2>&1 || true
+        cat "$rkhunter_tmp" >> "$LOG_FILE"
+
+        # Display with false-positive annotations
+        had_real_warning=false
+        while IFS= read -r line; do
+            is_fp=false
+            for pattern in "${RKH_FP[@]}"; do
+                if [[ "$line" == *"$pattern"* ]]; then
+                    is_fp=true; break
+                fi
+            done
+            if [[ "$is_fp" == true ]]; then
+                _log "${DIM}    $line${NC}"
+                _log "${DIM}${Y}    └─ likely false positive on Kali — see README${NC}"
+            elif [[ "$line" == Warning:* ]]; then
+                _log "${Y}    $line${NC}"
+                had_real_warning=true
+            elif [[ -n "$line" ]]; then
+                _log "    $line"
+            fi
+        done < "$rkhunter_tmp"
+        rm -f "$rkhunter_tmp"
+
+        if [[ "$had_real_warning" == true ]]; then
+            _warn "rkhunter found warnings not in the known false-positive list — review /var/log/rkhunter.log"
+        else
+            _info "All rkhunter warnings are known Kali false positives"
+        fi
+
+        _ok "rkhunter baseline scan complete — full log at /var/log/rkhunter.log"
     else
         _skip "rkhunter scan"
     fi
@@ -612,7 +688,7 @@ _section "15 / LYNIS AUDIT"
 
 if command -v lynis &>/dev/null; then
     if ask "Run lynis security audit? (read-only, informational only)"; then
-        run lynis audit system --quiet
+        run lynis audit system --quiet || true
         _ok "Lynis audit complete — report at /var/log/lynis.log"
     else
         _skip "Lynis audit"
